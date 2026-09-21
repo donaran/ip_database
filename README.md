@@ -58,6 +58,7 @@ Tests: `python -m unittest discover -s tests` (46 tests, no network, no Vivado).
 | --- | --- |
 | `tools/ipman/` | the tool (pure standard library, Python 3.9+) |
 | `cmake/IpMan.cmake` | `ipman_configure()` and `ipman_fetch_db()` |
+| `db/README.md` | **runbook: adding a new driver or repository** |
 | `db/ip-drivers.json` | the shared driver database |
 | `db/project-overrides.json` | project overlay: drivers still developed in-tree |
 | `drivers/pwm_ctrl/` | an in-project driver package |
@@ -129,6 +130,9 @@ coexists with the global database:
 ---
 
 ## Maintaining the database
+
+Step-by-step, from a new IP in a block design to a published database entry:
+**[db/README.md](db/README.md)**.
 
 Never hand-edit it; the CLI keeps the file sorted, validated, versioned, and
 changelogged, so git diffs stay readable.
