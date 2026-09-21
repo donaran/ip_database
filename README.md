@@ -56,6 +56,7 @@ Tests: `python -m unittest discover -s tests` (79 tests, no network, no Vivado).
 
 | Path | What it is |
 | --- | --- |
+| `AGENTS.md` | orientation for coding agents: invariants and conventions |
 | `tools/ipman/` | the tool (pure standard library, Python 3.9+) |
 | `cmake/IpMan.cmake` | `ipman_configure()` and `ipman_fetch_db()` |
 | `db/README.md` | **runbook: adding a new driver or repository** |

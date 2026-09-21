@@ -53,7 +53,7 @@ class IpInstance:
     @property
     def ip_key(self) -> str:
         """vendor:library:name -- the database key (version excluded)."""
-        return f"{self.vendor}:{self.library}:{self.name}"
+        return "%s:%s:%s" % (self.vendor, self.library, self.name)
 
 
 def split_vlnv(vlnv: str) -> tuple[str, str, str, str]:
