@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "kind": "ipman-driver",
+  "driver_version": "2.1.0",
+  "target": "ipdrv_adc_stream",
+  "summary": "Streaming ADC capture driver",
+  "implements": [
+    {
+      "ip": "acme.com:user:adc_stream",
+      "match": "2.*"
+    }
+  ]
+}

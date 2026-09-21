@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "kind": "ipman-driver",
+  "driver_version": "1.0.0",
+  "target": "ipdrv_axi_gpio_lite",
+  "summary": "Lightweight AXI GPIO driver",
+  "implements": [
+    {
+      "ip": "acme.com:user:axi_gpio_lite",
+      "match": "1.*"
+    }
+  ]
+}

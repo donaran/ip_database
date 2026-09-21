@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "kind": "ip-driver-db",
-  "db_version": "1.2.0",
-  "updated": "2026-09-21T19:17:18Z",
+  "db_version": "1.2.2",
+  "updated": "2026-09-21T21:08:06Z",
   "drivers": {
     "acme.com:user:adc_stream": {
       "summary": "Streaming ADC capture front end",
@@ -18,7 +18,7 @@
           "match": "2.*",
           "type": "archive",
           "uri": "${DEMO_ARCHIVES}/adc_stream-2.1.0.tar.gz",
-          "sha256": "1360cbe75f644f707364b630f3a2ba0b89ce8ebf4ffa98bcab6903176f2bd8b4"
+          "sha256": "15a51dd58f1da2eaf1ae00728d81617da571a33bca009ba0f031db280ea2b324"
         }
       ]
     },
@@ -37,14 +37,25 @@
           "match": "2.*",
           "type": "git",
           "uri": "${DEMO_GIT}/axi_gpio_lite.git",
-          "ref": "1b2a654d6ffaec0bd9029bd03b15145657b1ba13",
-          "ref_type": "commit",
-          "notes": "2.x register map not tagged yet; pinned to a commit"
+          "ref": "9d3f05a29a3ba3d7ae7e26e807a9640dfebbd8e4",
+          "ref_type": "commit"
         }
       ]
     }
   },
   "changelog": [
+    {
+      "db_version": "1.2.2",
+      "date": "2026-09-21T21:08:06Z",
+      "author": "bootstrap",
+      "change": "updated acme.com:user:axi_gpio_lite [2.*]"
+    },
+    {
+      "db_version": "1.2.1",
+      "date": "2026-09-21T21:08:05Z",
+      "author": "bootstrap",
+      "change": "updated acme.com:user:adc_stream [2.*]"
+    },
     {
       "db_version": "1.2.0",
       "date": "2026-09-21T19:17:18Z",

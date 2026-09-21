@@ -1,0 +1,88 @@
+// Register definition of record for acme.com:user:pwm_ctrl.
+//
+// SystemRDL has no version property of its own -- the built-in addrmap
+// properties are addressing, alignment, bigendian, bridge, dontcompare,
+// donttest, errextbus, hdl_path, hdl_path_gate, littleendian, lsb0, msb0,
+// rsvdset, rsvdsetX and sharedextbus, plus the global name/desc. So the
+// revision is carried in a user-defined property (SystemRDL 2.0 clause 15)
+// and must equal the version the IP is packaged with in Vivado.
+//
+// In a real flow this file drives all three outputs:
+//     peakrdl regblock-vhdl pwm_ctrl.rdl -o rtl/      --cpuif axi4-lite
+//     peakrdl c-header      pwm_ctrl.rdl -o generated/pwm_ctrl_v1.h --bitfields
+//     peakrdl html          pwm_ctrl.rdl -o docs/
+// The headers in this package are hand-written stand-ins with the same
+// layout; ipman-driver.json records this file's sha256 so the two cannot
+// drift apart unnoticed.
+
+property rdl_revision { type = string; component = addrmap; };
+
+// ---------------------------------------------------------------------------
+// Revision 1.x
+// ---------------------------------------------------------------------------
+addrmap pwm_ctrl_v1 {
+    name = "PWM controller";
+    desc = "Two-channel PWM with per-mille duty control.";
+    rdl_revision = "1.2";
+
+    default regwidth = 32;
+    default accesswidth = 32;
+
+    reg {
+        name = "Identification";
+        desc = "Fixed offset and layout in every revision. Read this first to
+                discover which register map the hardware implements.";
+        field { sw = r; hw = na; } MAGIC[31:16] = 0x5057;
+        field { sw = r; hw = na; } MAJOR[15:8] = 1;
+        field { sw = r; hw = na; } MINOR[7:0] = 2;
+    } ID @ 0x00;
+
+    reg {
+        name = "Control";
+        field { sw = rw; hw = r; desc = "Run the generator."; } ENABLE[0:0] = 0;
+    } CTRL @ 0x04;
+
+    reg {
+        name = "Duty cycle";
+        desc = "Per-mille: 0 is always low, 1000 always high.";
+        field { sw = rw; hw = r; } VALUE[9:0] = 0;
+    } DUTY[2] @ 0x08 += 0x04;
+};
+
+// ---------------------------------------------------------------------------
+// Revision 2.x -- major bump: DUTY widened 10 -> 16 bits, so 1.x software
+// writing this block would program the wrong value. CTRL.INVERT and the PHASE
+// registers are additions.
+// ---------------------------------------------------------------------------
+addrmap pwm_ctrl_v2 {
+    name = "PWM controller";
+    desc = "Two-channel PWM with per-mille duty and phase control.";
+    rdl_revision = "2.0";
+
+    default regwidth = 32;
+    default accesswidth = 32;
+
+    reg {
+        name = "Identification";
+        field { sw = r; hw = na; } MAGIC[31:16] = 0x5057;
+        field { sw = r; hw = na; } MAJOR[15:8] = 2;
+        field { sw = r; hw = na; } MINOR[7:0] = 0;
+    } ID @ 0x00;
+
+    reg {
+        name = "Control";
+        field { sw = rw; hw = r; } ENABLE[0:0] = 0;
+        field { sw = rw; hw = r; desc = "Invert both outputs."; } INVERT[1:1] = 0;
+    } CTRL @ 0x04;
+
+    reg {
+        name = "Duty cycle";
+        field { sw = rw; hw = r; } VALUE[15:0] = 0;
+    } DUTY[2] @ 0x08 += 0x04;
+
+    reg {
+        name = "Phase offset";
+        desc = "Per-mille offset of the rising edge. New in 2.x.";
+        field { sw = rw; hw = r; } VALUE[15:0] = 0;
+    } PHASE[2] @ 0x10 += 0x04;
+};

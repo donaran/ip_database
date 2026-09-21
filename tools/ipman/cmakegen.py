@@ -43,6 +43,9 @@ def generate_cmake(lock: dict, header_path=None) -> str:
     a("set(IPMAN_DB_VERSION %s)" % _cm_str(lock["db_version"]))
     a("set(IPMAN_XSA_SHA256 %s)" % _cm_str(lock["source"].get("sha256", "")))
     a("set(IPMAN_DRIVER_TARGETS %s)" % _cm_str(";".join(d["target"] for d in lock["drivers"])))
+    if header_path:
+        a("set(IPMAN_RECORD_DIR %s)"
+          % _cm_str((Path(header_path).resolve().parent / "drivers").as_posix()))
     a("")
 
     if lock["unresolved"]:
@@ -99,6 +102,21 @@ def generate_cmake(lock: dict, header_path=None) -> str:
             a(")")
             a("FetchContent_MakeAvailable(%s)" % fetch_name)
 
+        # The database said this driver serves the IP; the package itself gets
+        # to confirm it. Only possible now that the source is on disk.
+        a("if(COMMAND ipman_verify_driver)")
+        a("  ipman_verify_driver(")
+        a("    TARGET     %s" % _cm_str(d["target"]))
+        a("    IP         %s" % _cm_str(d["ip"]))
+        a("    IP_VERSION %s" % _cm_str(d["ip_version"]))
+        if src["type"] == "path":
+            a("    DIR        %s" % _cm_str(path))
+        else:
+            a("    DIR        %s" % _cm_str("${%s_SOURCE_DIR}" % fetch_name.lower()))
+            if src.get("subdir"):
+                a("    SUBDIR     %s" % _cm_str(src["subdir"]))
+        a("    RECORD_DIR \"${IPMAN_RECORD_DIR}\")")
+        a("endif()")
         a("if(NOT TARGET %s)" % d["target"])
         a("  message(FATAL_ERROR \"ipman: driver package for %s did not define "
           "target %s. Check the 'target' field in the driver database.\")"

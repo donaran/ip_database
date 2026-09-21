@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "kind": "ipman-driver",
+  "driver_version": "1.4.0",
+  "target": "ipdrv_pwm_ctrl",
+  "summary": "PWM controller driver, serves hardware revisions 1.x and 2.x",
+  "implements": [
+    {
+      "ip": "acme.com:user:pwm_ctrl",
+      "match": "1.*",
+      "map": {
+        "type": "acme::PwmCtrlV1",
+        "header": "pwm_ctrl_v1.hpp"
+      }
+    },
+    {
+      "ip": "acme.com:user:pwm_ctrl",
+      "match": "2.*",
+      "map": {
+        "type": "acme::PwmCtrlV2",
+        "header": "pwm_ctrl_v2.hpp"
+      }
+    }
+  ],
+  "id_register": {
+    "offset": "0x00",
+    "magic": {
+      "value": "0x5057",
+      "bits": [
+        31,
+        16
+      ]
+    },
+    "major": {
+      "bits": [
+        15,
+        8
+      ]
+    },
+    "minor": {
+      "bits": [
+        7,
+        0
+      ]
+    }
+  },
+  "register_model": {
+    "source": "rdl/pwm_ctrl.rdl",
+    "sha256": "95b980a83046893ae8675689c723e468bd6c77afcf6f072cb08bceefb45c49a7",
+    "generator": "hand-written stand-in for peakrdl c-header"
+  }
+}

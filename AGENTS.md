@@ -27,7 +27,7 @@ runbook for adding a driver. Keep both in step with behaviour changes.
 # sample/design_1.xsa and sample/_demo/ are gitignored build inputs.
 python sample/bootstrap_demo.py --clean
 
-python -m unittest discover -s tests          # 79 tests, offline, ~2s
+python -m unittest discover -s tests          # 124 tests, offline, ~2s
 
 cmake -S . -B build                           # parses the XSA at configure time
 cmake --build build --config Release
@@ -47,13 +47,13 @@ multi-config, so `--config Release` and `build/Release/` are not optional.
 | Path | Notes |
 | --- | --- |
 | `tools/ipman/` | the tool; **standard library only**, Python 3.9+ |
-| `cmake/IpMan.cmake` | `ipman_configure()`, `ipman_fetch_db()` |
+| `cmake/IpMan.cmake` | `ipman_configure()`, `ipman_fetch_db()`, `ipman_verify_driver()` |
 | `db/ip-drivers.json` | shared driver database — **never hand-edit** |
 | `db/project-overrides.json` | project overlay, same rule |
 | `drivers/pwm_ctrl/` | in-project driver package (`path` source example) |
 | `sample/driver_src/` | sources for the git and archive stand-ins |
 | `sample/_demo/`, `sample/design_1.xsa` | generated, gitignored |
-| `build/ipman/` | generated manifest, lock, `.cmake`, header — never edit |
+| `build/ipman/` | generated manifest, lock, `.cmake`, headers, driver records — never edit |
 | `tests/` | offline unit tests |
 
 ## Module responsibilities
@@ -67,13 +67,16 @@ xsa.py       .xsa/.hwh -> manifest dict.  The only module that knows XML.
 db.py        Load/merge/validate/mutate the database; version matching.
 resolve.py   manifest x db -> lock.  Builds the per-IP ${IP_*} substitutions.
 cmakegen.py  lock -> ip_drivers.cmake + ipman_ips.h.  The only module emitting CMake.
+driver_manifest.py  Reads a driver package's ipman-driver.json and checks it
+             against the lock.  Runs after the package is on disk.
+mapgen.py    Driver records -> ipman_maps.hpp, the runtime register-map union.
 artifactory.py  Publish/fetch/list over plain REST.  urllib only.
 cli.py       argparse surface.  Thin: logic belongs in the modules above.
 ```
 
 ## Data contracts
 
-Three JSON shapes, each tagged with `kind` and `schema`. `SCHEMA` lives in
+Four JSON shapes, each tagged with `kind` and `schema`. `SCHEMA` lives in
 `tools/ipman/__init__.py`; bump it if any shape changes incompatibly —
 `db.validate()` refuses a mismatched database rather than misreading it.
 
@@ -91,6 +94,27 @@ driver sources. Invariants worth preserving:
 
 **Manifest** (`kind: ip-manifest`) and **lock** (`kind: ip-driver-lock`) are
 generated; nothing reads them back except `resolve --manifest`.
+
+**Driver manifest** (`kind: ipman-driver`) lives in the driver package, not
+here. `implements[].match` reuses the database's match semantics on purpose --
+`driver_manifest.covers()` calls `db._score()` rather than reimplementing it. A
+`map` entry opts the IP into runtime dispatch and then `id_register` becomes
+mandatory, because without it there is no way to read the revision before the
+revision is known.
+
+### Two-pass configure
+
+`ipman_configure()` runs the tool twice, and the order is forced:
+
+1. `ipman generate` -- needs only the XSA and the database.
+2. `include(ip_drivers.cmake)` -- fetches and adds each driver, and calls back
+   into `ipman driver verify` per driver, writing a record to
+   `<out>/drivers/<target>.json`.
+3. `ipman driver maps` -- reads those records and emits `ipman_maps.hpp`.
+
+Step 3 cannot move earlier: a git or archive driver does not exist on disk
+until FetchContent has run. `<out>/drivers` is wiped before step 2 so a record
+for an IP that has left the design cannot survive.
 
 ### Internal keys
 
@@ -130,8 +154,9 @@ to `db.save()` — it would persist them. Mutating commands use single-file
 - Tests build their own databases in temp directories. Do **not** write a test
   that asserts on the contents of `db/*.json` — those are demo data and their
   `db_version` moves whenever someone runs a `db` command.
-- New behaviour needs a test. The git-ref work added 32; the shallow-clone
-  regression test exists because that bug shipped once already.
+- New behaviour needs a test. The git-ref work added 32 and driver
+  manifests 45; the shallow-clone regression test exists because that bug
+  shipped once already.
 
 ## Gotchas
 
@@ -174,6 +199,8 @@ State these limits rather than implying coverage:
 | --- | --- |
 | New CLI flag | `cli.build_parser()` + the `cmd_*` function; logic goes in a module |
 | New database field | `db.validate()`, `db.add_driver()`, `db.to_text()`, `cli` arg, both READMEs |
+| New driver-manifest field | `driver_manifest.validate()`, `verify()` record, `mapgen` if it affects generation |
+| Change the generated C++ union | `mapgen.generate()` + a `TestMapGeneration` assertion |
 | New source type | `db.SOURCE_TYPES`, `db.validate()`, `db.resolve_source()`, `cmakegen` |
 | Change generated CMake | `cmakegen.generate_cmake()` + a `TestGeneration` assertion |
 | Change vendor-IP heuristic | `xsa.VENDOR_VENDORS` / `VENDOR_LIBRARIES` |

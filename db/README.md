@@ -116,6 +116,31 @@ Four variables are set for you before the directory is added:
 `drivers/pwm_ctrl/` in this repo is a complete worked example, including the
 `IPDRV_SIMULATION` switch that lets the driver build and run on a host.
 
+**Add an `ipman-driver.json`.** It is the driver's own statement of which IP
+versions it serves, and it is what turns a mis-pointed database rule into a
+configure error instead of a driver silently built against the wrong register
+map:
+
+```json
+{
+  "schema": 1,
+  "kind": "ipman-driver",
+  "driver_version": "1.4.0",
+  "target": "ipdrv_pwm_ctrl",
+  "implements": [{"ip": "acme.com:user:pwm_ctrl", "match": "1.*"}]
+}
+```
+
+Check it from the driver's own CI, with no XSA and no database:
+
+```bash
+python -m ipman driver check .
+```
+
+A driver that serves several hardware revisions adds a `map` to each entry plus
+an `id_register` block, and gets a runtime `std::variant` over the revisions
+generated for it -- see the main [README](../README.md).
+
 **Tag a release.** A `git` rule should pin an immutable tag or commit, never a
 branch — `validate` warns about both a missing `ref` and a branch `ref`,
 because either means the driver changes underneath projects that already

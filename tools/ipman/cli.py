@@ -11,7 +11,9 @@ from pathlib import Path
 from . import __version__
 from . import artifactory as art
 from . import db as dbmod
+from . import driver_manifest as dmod
 from . import gitref
+from . import mapgen
 from . import xsa as xsamod
 from .cmakegen import generate_cmake, generate_header
 from .resolve import lock_to_text, resolve
@@ -123,6 +125,67 @@ def cmd_generate(args) -> int:
               % (u["ip"], u["ip_version"], ", ".join(u["instances"]), u["reason"]))
     print(cmake_path.as_posix())
     return 0
+
+
+def cmd_driver_verify(args) -> int:
+    """Confirm a fetched driver package implements the IP version in the design."""
+    record = dmod.verify(args.source_dir, args.ip, args.ip_version, args.target,
+                         subdir=args.subdir, require=args.require_manifest)
+    for warning in record.get("warnings", []):
+        print("ipman: warning: %s: %s" % (args.target, warning))
+
+    if record["status"] == "no-manifest":
+        print("ipman: %s has no %s; nothing to check against"
+              % (args.target, dmod.MANIFEST_NAME))
+    else:
+        print("ipman: %s implements %s %s (rule %s, driver %s)"
+              % (args.target, record["ip"], record["ip_version"],
+                 record["matched"], record["driver_version"] or "?"))
+
+    if args.record_dir:
+        write_json_atomic(Path(args.record_dir) / ("%s.json" % args.target), record)
+    return 0
+
+
+def cmd_driver_maps(args) -> int:
+    """Emit the runtime register-map union from the collected driver records."""
+    record_dir = Path(args.records)
+    records = []
+    if record_dir.is_dir():
+        for path in sorted(record_dir.glob("*.json")):
+            records.append(read_json(path))
+    header = mapgen.generate(records, db_version=args.db_version or "")
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(header, encoding="utf-8", newline='\n')
+    groups = mapgen.collect(records)
+    if groups:
+        for group in groups:
+            print("ipman: %s dispatches %d register map(s): %s"
+                  % (group["name"], len(group["maps"]),
+                     ", ".join(m["match"] for m in group["maps"])))
+    else:
+        print("ipman: no driver declared a register map; %s is empty" % out.name)
+    return 0
+
+
+def cmd_driver_check(args) -> int:
+    """Validate an ipman-driver.json on its own, for a driver package's CI."""
+    path = Path(args.manifest)
+    if path.is_dir():
+        found = dmod.manifest_path(path)
+        if found is None:
+            raise IpmanError("no %s in %s" % (dmod.MANIFEST_NAME, path))
+        path = found
+    manifest = dmod.load(path)
+    warnings = dmod.validate(manifest, path)
+    warnings.extend(dmod.check_register_model(manifest, path.parent))
+    for warning in warnings:
+        print("warning: %s" % warning)
+    print("%s: OK, target %s, %d implements entry(s), %d register map(s)"
+          % (path, manifest.get("target", "?"), len(manifest["implements"]),
+             sum(1 for e in manifest["implements"] if e.get("map"))))
+    return 1 if (warnings and args.strict) else 0
 
 
 def cmd_db_init(args) -> int:
@@ -333,6 +396,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-vendor", action="store_true")
     add_define(p)
     p.set_defaults(func=cmd_generate)
+
+    drv = sub.add_parser("driver", help="driver-package manifests and register maps")
+    drvsub = drv.add_subparsers(dest="driver_command", required=True)
+
+    q = drvsub.add_parser("verify",
+                          help="check a driver package implements an IP version")
+    q.add_argument("source_dir", help="the populated driver package directory")
+    q.add_argument("--ip", required=True, metavar="VENDOR:LIBRARY:NAME")
+    q.add_argument("--ip-version", required=True)
+    q.add_argument("--target", required=True, help="CMake target the lock expects")
+    q.add_argument("--subdir", help="driver subdirectory inside the package")
+    q.add_argument("--require-manifest", action="store_true",
+                   help="fail if the package ships no ipman-driver.json")
+    q.add_argument("--record-dir", help="write a record here for 'driver maps'")
+    q.set_defaults(func=cmd_driver_verify)
+
+    q = drvsub.add_parser("maps", help="generate the runtime register-map union")
+    q.add_argument("--records", required=True,
+                   help="directory of records written by 'driver verify'")
+    q.add_argument("--out", required=True, help="header file to write")
+    q.add_argument("--db-version", help="recorded in the header for traceability")
+    q.set_defaults(func=cmd_driver_maps)
+
+    q = drvsub.add_parser("check", help="validate an ipman-driver.json")
+    q.add_argument("manifest", help="the manifest, or the package directory")
+    q.add_argument("--strict", action="store_true", help="exit non-zero on warnings")
+    q.set_defaults(func=cmd_driver_check)
 
     dbp = sub.add_parser("db", help="inspect and maintain the driver database")
     dbsub = dbp.add_subparsers(dest="db_command", required=True)

@@ -48,7 +48,7 @@ The demo deliberately covers all four cases: a driver fetched from git, one
 unpacked from an archive, one built from a directory in the project, and one IP
 with no driver at all.
 
-Tests: `python -m unittest discover -s tests` (79 tests, no network, no Vivado).
+Tests: `python -m unittest discover -s tests` (124 tests, no network, no Vivado).
 
 ---
 
@@ -62,7 +62,7 @@ Tests: `python -m unittest discover -s tests` (79 tests, no network, no Vivado).
 | `db/README.md` | **runbook: adding a new driver or repository** |
 | `db/ip-drivers.json` | the shared driver database |
 | `db/project-overrides.json` | project overlay: drivers still developed in-tree |
-| `drivers/pwm_ctrl/` | an in-project driver package |
+| `drivers/pwm_ctrl/` | in-project driver package: two register-map revisions, `.rdl`, manifest |
 | `src/main.cpp` | the hello-world application |
 | `sample/` | synthetic XSA and stand-in git repo / archive |
 | `tests/` | unit tests: a fake Artifactory server and a throwaway git repo |
@@ -306,9 +306,10 @@ target_link_libraries(app PRIVATE ipman::drivers)
 ```
 
 `ipman::drivers` is an interface library: it links every resolved driver and
-puts the generated header on the include path. Also set in the caller's scope:
+puts the generated headers (`ipman_ips.h`, `ipman_maps.hpp`) on the include
+path. Also set in the caller's scope:
 `IPMAN_MANIFEST`, `IPMAN_LOCK`, `IPMAN_GENERATED_DIR`, `IPMAN_DRIVER_TARGETS`,
-`IPMAN_DB_VERSION`.
+`IPMAN_DB_VERSION`, `IPMAN_MAPS_HEADER`.
 
 `STRICT` turns an IP with no driver into a configure error instead of a
 warning. Use it in CI once the database is complete.
@@ -339,6 +340,132 @@ IP with no driver still appears, with an empty `driver` field — the applicatio
 can report it instead of silently ignoring it.
 
 ---
+
+## Driver manifests and runtime register maps
+
+The database says "IP version 1.2 is served by this git tag". Nothing checked
+that whatever is at that tag actually implements 1.2 -- a re-tagged repo or a
+copy-pasted rule gives you a driver that compiles cleanly against the wrong
+register map. `ipman-driver.json` in the driver package is the driver's half of
+that contract:
+
+```json
+{
+  "schema": 1,
+  "kind": "ipman-driver",
+  "driver_version": "1.4.0",
+  "target": "ipdrv_pwm_ctrl",
+  "implements": [
+    {"ip": "acme.com:user:pwm_ctrl", "match": "1.*",
+     "map": {"type": "acme::PwmCtrlV1", "header": "pwm_ctrl_v1.hpp"}},
+    {"ip": "acme.com:user:pwm_ctrl", "match": "2.*",
+     "map": {"type": "acme::PwmCtrlV2", "header": "pwm_ctrl_v2.hpp"}}
+  ],
+  "id_register": {
+    "offset": "0x00",
+    "magic": {"value": "0x5057", "bits": [31, 16]},
+    "major": {"bits": [15, 8]},
+    "minor": {"bits": [7, 0]}
+  },
+  "register_model": {"source": "rdl/pwm_ctrl.rdl", "sha256": "..."}
+}
+```
+
+Once the package is on disk, `ipman_configure()` checks it against the lock and
+stops the build on a contradiction:
+
+```
+CMake Error: C:/.../drivers/pwm_ctrl does not implement acme.com:user:pwm_ctrl 1.2.
+  It claims: acme.com:user:pwm_ctrl 2.*
+  Either the database points at the wrong driver revision, or the driver needs
+  an 'implements' entry for this hardware version.
+```
+
+It also catches a target name that disagrees with the database, and -- if the
+package ships its register description and records its `sha256` -- a manifest
+that has drifted away from the registers it claims to describe. Manifests are
+optional by default; pass `REQUIRE_MANIFEST` to `ipman_configure()` to insist.
+
+Validate one from a driver's own CI, no XSA needed:
+
+```bash
+python -m ipman driver check .
+```
+
+### Runtime register-map selection
+
+Build-time resolution picks *a driver*. When one software image has to run
+against more than one bitstream revision -- a field-updated FPGA, one image
+across a board family -- something also has to pick *a register layout*, at
+runtime, from what the hardware reports.
+
+Any `implements` entry with a `map` opts into that. ipman generates
+`ipman_maps.hpp` from the manifests of the drivers it resolved:
+
+```cpp
+namespace ipman::pwm_ctrl {
+    using Map = std::variant<acme::PwmCtrlV1, acme::PwmCtrlV2>;
+    Probe probe(std::uintptr_t base);            // reads the ID register
+    std::optional<Map> bind(std::uintptr_t base);
+    const char *map_name(const Map &);
+    bool matches_build(std::uintptr_t base);
+}
+```
+
+`bind` reads the ID register at its fixed offset, checks the magic, decodes
+major/minor, and constructs the alternative whose `match` covers that version.
+The version tests are compiled from the manifest, so the rule is stated once.
+
+```cpp
+auto map = ipman::pwm_ctrl::bind(PWM_CTRL_0_BASEADDR);
+if (!map) return;                       // no such IP, or no driver for it
+
+std::visit([](auto &pwm) {              // the API every revision shares
+    pwm.enable(true);
+    pwm.set_duty(0, 250);
+}, *map);
+
+if (auto *v2 = std::get_if<acme::PwmCtrlV2>(&*map)) {
+    v2->set_phase(0, 125);              // 2.x only, and the compiler knows
+}
+```
+
+The demo shows it working: the same binary binds `pwm_ctrl_0` (reporting 1.2)
+to `PwmCtrlV1` and `pwm_ctrl_1` (reporting 2.0) to `PwmCtrlV2`.
+
+A register-map type owes the generated code exactly two things:
+
+```cpp
+static std::uint32_t read_word(std::uintptr_t base, std::size_t offset);
+explicit PwmCtrlV1(std::uintptr_t base);
+```
+
+`read_word` is the driver's job on purpose: it is the one piece that knows
+whether this build talks to real MMIO or a simulation backing store.
+
+**The ID register is the contract.** It must sit at the same offset with the
+same layout in every revision, because it is read before the revision is known.
+Put it at offset 0 and never move it.
+
+### SystemRDL / PeakRDL
+
+`register_model` is where a generated flow plugs in. `drivers/pwm_ctrl/rdl/pwm_ctrl.rdl`
+is the register definition of record for the demo IP; in a real flow it drives
+the RTL, the C header and the documentation from one source:
+
+```bash
+peakrdl regblock-vhdl rdl/pwm_ctrl.rdl -o rtl/ --cpuif axi4-lite
+peakrdl c-header      rdl/pwm_ctrl.rdl -o generated/pwm_ctrl_v1.h --bitfields
+peakrdl html          rdl/pwm_ctrl.rdl -o docs/
+```
+
+SystemRDL has no version property of its own, so the revision lives in a
+user-defined property (`rdl_revision`) and must equal the version the IP is
+packaged with in Vivado. Recording the `.rdl` sha256 in the manifest is what
+stops the two drifting apart silently.
+
+The headers in this repo are hand-written stand-ins with the same layout --
+PeakRDL is not installed here and has not been run.
 
 ## Driver package contract
 
@@ -389,6 +516,10 @@ ipman resolve  (--xsa F | --manifest F) [--db F]... [-o out] [-f json|text]
                [--strict] [--include-vendor] [-D VAR=VALUE]... [--project-root D]
 ipman generate --xsa F [--db F]... --out-dir D [--header-name H]
                [--strict] [--include-vendor] [-D VAR=VALUE]... [--project-root D]
+
+ipman driver check <package>            validate an ipman-driver.json
+ipman driver verify <dir> --ip … --ip-version … --target …
+ipman driver maps --records D --out H   generate the register-map union
 
 ipman db init | list | validate | verify | add | remove | bump
 ipman db publish | fetch | versions        (Artifactory)
