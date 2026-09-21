@@ -48,7 +48,7 @@ The demo deliberately covers all four cases: a driver fetched from git, one
 unpacked from an archive, one built from a directory in the project, and one IP
 with no driver at all.
 
-Tests: `python -m unittest discover -s tests` (46 tests, no network, no Vivado).
+Tests: `python -m unittest discover -s tests` (47 tests, no network, no Vivado).
 
 ---
 
