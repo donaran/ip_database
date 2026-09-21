@@ -48,7 +48,7 @@ The demo deliberately covers all four cases: a driver fetched from git, one
 unpacked from an archive, one built from a directory in the project, and one IP
 with no driver at all.
 
-Tests: `python -m unittest discover -s tests` (47 tests, no network, no Vivado).
+Tests: `python -m unittest discover -s tests` (79 tests, no network, no Vivado).
 
 ---
 
@@ -64,7 +64,7 @@ Tests: `python -m unittest discover -s tests` (47 tests, no network, no Vivado).
 | `drivers/pwm_ctrl/` | an in-project driver package |
 | `src/main.cpp` | the hello-world application |
 | `sample/` | synthetic XSA and stand-in git repo / archive |
-| `tests/` | unit tests, including a fake Artifactory server |
+| `tests/` | unit tests: a fake Artifactory server and a throwaway git repo |
 
 ---
 
@@ -104,17 +104,64 @@ changes the outcome. Vivado's odd version strings (`1.03.a`) work as literals.
 
 | `type` | fields | fetched by |
 | --- | --- | --- |
-| `git` | `uri`, `ref`, `subdir` | `FetchContent` (shallow clone when `ref` is a tag) |
+| `git` | `uri`, `ref`, `ref_type`, `subdir` | `FetchContent` (shallow clone for a tag or branch) |
 | `archive` | `uri`, `sha256`, `subdir` | `FetchContent` with `URL_HASH` |
 | `path` | `uri` (absolute, `${VAR}`-relative, or relative to the database file) | `add_subdirectory` |
 
-**Variables.** `${NAME}` in a `uri` is substituted from `-D NAME=value`, then
-from the environment. `${PROJECT_ROOT}` is always set by `ipman_configure()` to
+**Variables.** `${NAME}` in a `uri`, `ref` or `subdir` is substituted from
+`-D NAME=value`, then from the environment. `${PROJECT_ROOT}` is always set by `ipman_configure()` to
 `CMAKE_SOURCE_DIR`. This is what keeps the shared database site-neutral:
 
 ```json
 {"type": "git", "uri": "${CORP_GIT}/fpga/drivers/pwm_ctrl.git", "ref": "v1.4.0"}
 ```
+
+Per-IP variables are also available, so a rule can derive its ref from the
+hardware version it matched: `IP_VENDOR`, `IP_LIBRARY`, `IP_NAME`,
+`IP_VERSION`, `IP_VERSION_MAJOR`, `IP_VERSION_MINOR`.
+
+**Pinning a tag or commit per IP version.** Each version rule carries its own
+`ref`, so the hardware version decides which point in the driver's history gets
+built:
+
+```json
+"versions": [
+  {"match": "1.2", "type": "git", "uri": "...", "ref": "v1.4.0"},
+  {"match": "1.3", "type": "git", "uri": "...", "ref": "v1.5.2"},
+  {"match": "2.*", "type": "git", "uri": "...",
+   "ref": "9f2c1ab4d7e0...", "ref_type": "commit"}
+]
+```
+
+`ref_type` is `tag`, `branch` or `commit`, and is inferred when omitted — a hex
+object name is a commit, anything else a tag. It decides whether the clone can
+be shallow: a commit cannot be fetched by name with `--depth 1`, so it is
+cloned in full. Declare it explicitly when a tag name happens to be all hex, or
+to make a branch dependency obvious (`validate` warns about branches, since the
+driver then moves underneath you).
+
+When driver tags track IP versions, one rule can cover the family:
+
+```json
+{"match": "1.*", "type": "git", "uri": "...", "ref": "v${IP_VERSION}.0"}
+```
+
+IP 1.0 pulls tag `v1.0.0`, IP 1.3 pulls `v1.3.0`. The ref is classified after
+expansion, so a template that resolves to a sha is still treated as a commit.
+
+Check that the refs are real before anyone builds:
+
+```bash
+python -m ipman db verify -D CORP_GIT=ssh://git@git.acme.com
+```
+
+```
+acme.com:user:axi_gpio_lite  1.*   v${IP_VERSION}.0  skipped  templated; resolved per IP version
+acme.com:user:axi_gpio_lite  2.*   1b2a654d6ffa...   ok       commit is the tip of HEAD
+```
+
+`db add --verify-ref` runs the same check for a single rule before writing it,
+and refuses to add a rule pinning a tag that does not exist.
 
 **Layering.** `--db` is repeatable and later files win. The shared database
 holds org-wide drivers; a project overlay adds or overrides entries without
@@ -342,7 +389,7 @@ ipman resolve  (--xsa F | --manifest F) [--db F]... [-o out] [-f json|text]
 ipman generate --xsa F [--db F]... --out-dir D [--header-name H]
                [--strict] [--include-vendor] [-D VAR=VALUE]... [--project-root D]
 
-ipman db init | list | validate | add | remove | bump
+ipman db init | list | validate | verify | add | remove | bump
 ipman db publish | fetch | versions        (Artifactory)
 ```
 

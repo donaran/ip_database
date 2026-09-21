@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "kind": "ip-driver-db",
-  "db_version": "1.1.0",
-  "updated": "2026-09-21T18:05:53Z",
+  "db_version": "1.2.0",
+  "updated": "2026-09-21T19:17:18Z",
   "drivers": {
     "acme.com:user:adc_stream": {
       "summary": "Streaming ADC capture front end",
@@ -30,12 +30,33 @@
           "match": "1.*",
           "type": "git",
           "uri": "${DEMO_GIT}/axi_gpio_lite.git",
-          "ref": "v1.0.0"
+          "ref": "v${IP_VERSION}.0",
+          "notes": "driver tags track the IP version: IP 1.0 -> v1.0.0"
+        },
+        {
+          "match": "2.*",
+          "type": "git",
+          "uri": "${DEMO_GIT}/axi_gpio_lite.git",
+          "ref": "1b2a654d6ffaec0bd9029bd03b15145657b1ba13",
+          "ref_type": "commit",
+          "notes": "2.x register map not tagged yet; pinned to a commit"
         }
       ]
     }
   },
   "changelog": [
+    {
+      "db_version": "1.2.0",
+      "date": "2026-09-21T19:17:18Z",
+      "author": "bootstrap",
+      "change": "added acme.com:user:axi_gpio_lite [2.*]"
+    },
+    {
+      "db_version": "1.1.1",
+      "date": "2026-09-21T19:17:18Z",
+      "author": "bootstrap",
+      "change": "updated acme.com:user:axi_gpio_lite [1.*]"
+    },
     {
       "db_version": "1.1.0",
       "date": "2026-09-21T18:05:53Z",

@@ -38,6 +38,7 @@ import re
 from pathlib import Path
 
 from . import SCHEMA
+from .gitref import REF_TYPES, SHA_RE, classify, is_templated
 from .util import IpmanError, expand_env, read_json, utc_now, write_json_atomic
 
 SOURCE_TYPES = ("git", "path", "archive")
@@ -149,11 +150,37 @@ def validate(db: dict, path=None) -> list:
                                  % (key, match, "/".join(SOURCE_TYPES), stype))
             if not v.get("uri"):
                 raise IpmanError("%s match %s: missing 'uri'" % (key, match))
-            if stype == "git" and not v.get("ref"):
-                warnings.append("%s match %s: git source has no 'ref', will track "
-                                "the default branch (not reproducible)" % (key, match))
+            if stype == "git":
+                warnings.extend(_check_git_ref(key, match, v))
             if stype == "archive" and not v.get("sha256"):
                 warnings.append("%s match %s: archive source has no 'sha256'" % (key, match))
+    return warnings
+
+
+def _check_git_ref(key: str, match: str, rule: dict) -> list:
+    """Validate a git rule's ref/ref_type pair; return advisory warnings."""
+    ref = rule.get("ref")
+    declared = rule.get("ref_type")
+    if declared and declared not in REF_TYPES:
+        raise IpmanError("%s match %s: ref_type must be one of %s, got %r"
+                         % (key, match, "/".join(REF_TYPES), declared))
+    if not ref:
+        return ["%s match %s: git source has no 'ref', will track the default "
+                "branch (not reproducible)" % (key, match)]
+    if is_templated(ref):
+        return []
+
+    kind = classify(ref, declared)
+    warnings = []
+    if declared == "commit" and not SHA_RE.match(ref):
+        raise IpmanError("%s match %s: ref_type is 'commit' but %r is not a hex "
+                         "object name" % (key, match, ref))
+    if kind == "commit" and len(ref) < 40:
+        warnings.append("%s match %s: abbreviated commit %r may become ambiguous; "
+                        "prefer the full 40-character sha" % (key, match, ref))
+    if kind == "branch":
+        warnings.append("%s match %s: ref %r is a branch, so the driver moves "
+                        "under you; pin a tag or a commit" % (key, match, ref))
     return warnings
 
 
@@ -192,9 +219,13 @@ def resolve_source(rule: dict, db_path, subs: dict | None = None) -> dict:
     """Expand ${VARS} and make `path` sources absolute (relative to the db)."""
     out = dict(rule)
     db_path = out.pop("_db", None) or db_path
-    out["uri"] = expand_env(str(rule["uri"]), subs)
-    if rule.get("subdir"):
-        out["subdir"] = expand_env(str(rule["subdir"]), subs)
+    for field in ("uri", "ref", "subdir"):
+        if rule.get(field):
+            out[field] = expand_env(str(rule[field]), subs)
+    if out["type"] == "git":
+        # Record what the ref turned out to be, so the lock and the generated
+        # CMake do not have to guess again.
+        out["ref_type"] = classify(out.get("ref"), rule.get("ref_type"))
     if out["type"] == "path":
         p = Path(out["uri"])
         if not p.is_absolute():
@@ -291,7 +322,9 @@ def to_text(db: dict) -> str:
         for rule in entry.get("versions", []):
             detail = "%s %s" % (rule["type"], rule["uri"])
             if rule.get("ref"):
-                detail += " @ " + rule["ref"]
+                kind = ("templated" if is_templated(rule["ref"])
+                        else classify(rule["ref"], rule.get("ref_type")))
+                detail += " @ %s (%s)" % (rule["ref"], kind)
             if rule.get("subdir"):
                 detail += " [" + rule["subdir"] + "]"
             out.append("    %-10s -> %s" % (rule["match"], detail))

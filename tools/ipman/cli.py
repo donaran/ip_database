@@ -11,10 +11,11 @@ from pathlib import Path
 from . import __version__
 from . import artifactory as art
 from . import db as dbmod
+from . import gitref
 from . import xsa as xsamod
 from .cmakegen import generate_cmake, generate_header
 from .resolve import lock_to_text, resolve
-from .util import IpmanError, read_json, write_json_atomic
+from .util import IpmanError, expand_env, read_json, write_json_atomic
 
 
 def _db_paths(args):
@@ -157,8 +158,22 @@ def cmd_db_validate(args) -> int:
 def cmd_db_add(args) -> int:
     database = dbmod.load(args.db)
     source = {"type": args.type, "uri": args.uri, "ref": args.ref,
-              "subdir": args.subdir, "sha256": args.sha256, "target": args.target,
-              "notes": args.notes}
+              "ref_type": args.ref_type, "subdir": args.subdir,
+              "sha256": args.sha256, "target": args.target, "notes": args.notes}
+
+    if args.verify_ref:
+        if args.type != "git":
+            raise IpmanError("--verify-ref only applies to a git source")
+        subs = _subs(args.define)
+        uri = expand_env(args.uri, subs)
+        result = gitref.verify(uri, args.ref, args.ref_type, timeout=args.timeout)
+        print("verify %s @ %s: %s - %s"
+              % (uri, args.ref or "(default branch)", result["status"], result["detail"]))
+        if result["status"] == "missing":
+            raise IpmanError("refusing to add a rule pinning a ref that does not exist")
+        if result["sha"] and args.ref_type != "commit":
+            print("  (pin the commit instead with --ref %s --ref-type commit)"
+                  % result["sha"])
     action = dbmod.add_driver(database, args.vlnv, args.match, source,
                               summary=args.summary, owner=args.owner,
                               replace=args.replace)
@@ -188,6 +203,45 @@ def cmd_db_bump(args) -> int:
     dbmod.save(args.db, database)
     print("%s is now v%s" % (args.db, new_version))
     return 0
+
+
+def cmd_db_verify(args) -> int:
+    """Check every git rule's ref against its remote."""
+    database = dbmod.load(args.db)
+    subs = _subs(args.define)
+    rows, failures = [], 0
+    for key in sorted(database["drivers"]):
+        for rule in database["drivers"][key].get("versions", []):
+            if rule.get("type") != "git":
+                continue
+            try:
+                uri = expand_env(str(rule["uri"]), subs)
+            except IpmanError as exc:
+                rows.append((key, rule["match"], rule.get("ref") or "-",
+                             "skipped", str(exc)))
+                continue
+            try:
+                result = gitref.verify(uri, rule.get("ref"), rule.get("ref_type"),
+                                       timeout=args.timeout)
+            except IpmanError as exc:
+                rows.append((key, rule["match"], rule.get("ref") or "-",
+                             "error", str(exc)))
+                failures += 1
+                continue
+            rows.append((key, rule["match"], rule.get("ref") or "-",
+                         result["status"], result["detail"]))
+            if result["status"] == "missing":
+                failures += 1
+
+    if not rows:
+        print("no git rules in %s" % args.db)
+        return 0
+    width = max(len(r[0]) for r in rows)
+    for key, match, ref, status, detail in rows:
+        print("%-*s  %-8s  %-16s  %-8s  %s" % (width, key, match, ref, status, detail))
+    print()
+    print("%d git rule(s), %d problem(s)" % (len(rows), failures))
+    return 1 if failures else 0
 
 
 def _art_headers(args) -> dict:
@@ -325,7 +379,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--type", choices=dbmod.SOURCE_TYPES, default="git")
     q.add_argument("--uri", required=True,
                    help="git URL, directory path, or archive URL; ${VARS} allowed")
-    q.add_argument("--ref", help="git tag, branch or sha")
+    q.add_argument("--ref", help="git tag, branch or commit sha that this "
+                                 "hardware version pins; ${IP_VERSION} allowed")
+    q.add_argument("--ref-type", choices=gitref.REF_TYPES,
+                   help="what --ref names (default: inferred -- a hex object "
+                        "name is a commit, anything else a tag)")
+    q.add_argument("--verify-ref", action="store_true",
+                   help="check the ref exists on the remote before adding")
+    q.add_argument("--timeout", type=int, default=20,
+                   help="seconds to wait for the remote (default 20)")
     q.add_argument("--subdir", help="driver subdirectory inside the repo/archive")
     q.add_argument("--sha256", help="archive checksum")
     q.add_argument("--target", help="CMake target the driver defines "
@@ -335,8 +397,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--notes")
     q.add_argument("--replace", action="store_true",
                    help="overwrite an existing rule with the same --match")
+    add_define(q)
     add_edit_args(q)
     q.set_defaults(func=cmd_db_add)
+
+    q = dbsub.add_parser("verify", help="check every git rule's ref on its remote")
+    add_db_arg(q)
+    add_define(q)
+    q.add_argument("--timeout", type=int, default=20)
+    q.set_defaults(func=cmd_db_verify)
 
     q = dbsub.add_parser("remove", help="remove a rule or a whole IP entry")
     add_db_arg(q)

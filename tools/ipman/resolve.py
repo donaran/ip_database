@@ -19,6 +19,29 @@ def _version_suffix(version: str) -> str:
     return "v" + re.sub(r"[^A-Za-z0-9]", "_", version)
 
 
+def ip_substitutions(ip_key: str, version: str, base: dict | None = None) -> dict:
+    """Variables a rule may use to derive a ref, URI or subdirectory.
+
+    This is what lets one rule cover a family of hardware versions whose driver
+    tags follow a convention, e.g. ``"ref": "v${IP_VERSION}.0"`` on a "1.*"
+    rule pulls tag v1.0.0 for IP 1.0 and v1.3.0 for IP 1.3.
+    """
+    vendor, library, name = ip_key.split(":")
+    subs = dict(base or {})
+    subs.update({
+        "IP_VENDOR": vendor,
+        "IP_LIBRARY": library,
+        "IP_NAME": name,
+        "IP_VERSION": version,
+    })
+    parts = version.split(".")
+    if parts[0]:
+        subs["IP_VERSION_MAJOR"] = parts[0]
+    if len(parts) > 1 and parts[1]:
+        subs["IP_VERSION_MINOR"] = parts[1]
+    return subs
+
+
 def resolve(manifest: dict, db: dict, db_path, include_vendor: bool = False,
             strict: bool = False, subs: dict | None = None) -> dict:
     groups: dict = {}
@@ -77,7 +100,8 @@ def resolve(manifest: dict, db: dict, db_path, include_vendor: bool = False,
             "target": target,
             "summary": entry.get("summary", ""),
             "owner": entry.get("owner", ""),
-            "source": resolve_source(rule, db_path, subs),
+            "source": resolve_source(
+                rule, db_path, ip_substitutions(group["ip"], group["ip_version"], subs)),
             "instances": group["instances"],
         })
 
@@ -108,7 +132,7 @@ def lock_to_text(lock: dict) -> str:
             src = d["source"]
             detail = "%s %s" % (src["type"], src["uri"])
             if src.get("ref"):
-                detail += " @ " + src["ref"]
+                detail += " @ %s (%s)" % (src["ref"], src.get("ref_type", "tag"))
             out.append("  %s %s -> %s" % (d["ip"], d["ip_version"], d["target"]))
             out.append("      %s" % detail)
             out.append("      instances: %s"

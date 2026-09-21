@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-HEX40 = re.compile(r"^[0-9a-fA-F]{40}$")
+from .gitref import can_shallow_clone, classify
 
 
 def _cm_str(value) -> str:
@@ -82,8 +82,12 @@ def generate_cmake(lock: dict, header_path=None) -> str:
                 a("  GIT_REPOSITORY %s" % _cm_str(src["uri"]))
                 ref = src.get("ref") or ""
                 if ref:
-                    a("  GIT_TAG %s" % _cm_str(ref))
-                    if not HEX40.match(ref):
+                    kind = classify(ref, src.get("ref_type"))
+                    a("  GIT_TAG %s  # %s" % (_cm_str(ref), kind))
+                    # A commit cannot be fetched by name with --depth 1; asking
+                    # for it produces an opaque clone failure, so only shallow
+                    # clone tags and branches.
+                    if can_shallow_clone(ref, src.get("ref_type")):
                         a("  GIT_SHALLOW TRUE")
                 a("  GIT_SUBMODULES_RECURSE TRUE")
             else:

@@ -116,12 +116,22 @@ Four variables are set for you before the directory is added:
 `drivers/pwm_ctrl/` in this repo is a complete worked example, including the
 `IPDRV_SIMULATION` switch that lets the driver build and run on a host.
 
-**Tag a release.** `git` entries should point at an immutable tag, not a
-branch — `ipman db validate` warns about any rule with no `ref`.
+**Tag a release.** A `git` rule should pin an immutable tag or commit, never a
+branch — `validate` warns about both a missing `ref` and a branch `ref`,
+because either means the driver changes underneath projects that already
+build.
 
 ```bash
 git tag -a v1.4.0 -m "pwm_ctrl driver 1.4.0" && git push origin v1.4.0
 ```
+
+Decide now how driver tags relate to IP versions. Either is fine, and the
+database expresses both:
+
+| Convention | Rule |
+| --- | --- |
+| Driver versioned independently of the IP | one rule per IP version, each with its own `--ref` |
+| Driver tag tracks the IP version (`v1.3.0` for IP 1.3) | one rule with `--ref 'v${IP_VERSION}.0'` |
 
 ---
 
@@ -141,6 +151,72 @@ python -m ipman db add \
 ```
 
 Driver not at the repo root? Add `--subdir drivers/pwm_ctrl`.
+
+Add `--verify-ref` and the tag is checked on the remote before the rule is
+written — a typo becomes an error here instead of an opaque clone failure in
+somebody else's build:
+
+```
+verify ssh://git@git.acme.com/fpga/drivers/pwm_ctrl.git @ v1.4.0: ok - refs/tags/v1.4.0 -> 1b2a654d6ffa
+  (pin the commit instead with --ref 1b2a654d6ffa... --ref-type commit)
+```
+
+#### Pinning a specific tag or commit per IP version
+
+Each rule pins its own ref, so the hardware version decides what gets built:
+
+```bash
+# IP 1.2 needs driver v1.4.0; IP 1.3 needs v1.5.2.
+python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.2"  \
+  --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v1.4.0
+
+python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.3"  \
+  --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v1.5.2 --bump patch
+```
+
+To pin a commit — the 2.x register map works but has no tag yet:
+
+```bash
+python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "2.*"  \
+  --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git'  \
+  --ref 9f2c1ab4d7e0c3b8a1f5029e6d4c7b8a3f1e0d92 --ref-type commit
+```
+
+`--ref-type` is `tag`, `branch` or `commit` and is inferred when you leave it
+off: a hex object name is a commit, anything else a tag. It is worth being
+explicit when a tag name is all hex, or when you genuinely do want a branch.
+Getting it wrong is not cosmetic — a commit cannot be fetched with `--depth 1`,
+so ipman only shallow-clones tags and branches.
+
+Prefer the **full 40-character sha**. An abbreviated one works today and can
+become ambiguous as the repo grows; `validate` warns about it.
+
+#### When the driver tag follows the IP version
+
+If `pwm_ctrl` IP 1.3 is always served by driver tag `v1.3.0`, one rule covers
+the whole family:
+
+```bash
+python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.*"  \
+  --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git'  \
+  --ref 'v${IP_VERSION}.0' --replace --bump minor
+```
+
+Available inside `--ref`, `--uri` and `--subdir`: `${IP_VERSION}`,
+`${IP_VERSION_MAJOR}`, `${IP_VERSION_MINOR}`, `${IP_NAME}`, `${IP_VENDOR}`,
+`${IP_LIBRARY}`.
+
+The substitution happens per IP version at resolve time, so `ipman resolve`
+shows the real tag:
+
+```
+  acme.com:user:pwm_ctrl 1.2 -> ipdrv_pwm_ctrl
+      git ssh://git@git.acme.com/fpga/drivers/pwm_ctrl.git @ v1.2.0 (tag)
+```
+
+Convenient, but it silently depends on every future tag existing. `db verify`
+cannot check a templated ref (it has no IP version to substitute), so prefer
+explicit rules for drivers where the mapping is not mechanical.
 
 `${CORP_GIT}` is substituted at configure time from `DEFINES` in
 `ipman_configure()` or from the environment, so the same database works over
@@ -201,7 +277,10 @@ own directory — but `${PROJECT_ROOT}` says what you mean.
 # 1. Schema, keys, source types. Warnings become errors at publish time.
 python -m ipman db validate --strict
 
-# 2. Does it actually match the hardware version in your XSA?
+# 2. Do the git refs exist on their remotes?
+python -m ipman db verify -D CORP_GIT=ssh://git@git.acme.com
+
+# 3. Does the rule actually match the hardware version in your XSA?
 python -m ipman resolve --xsa hw/design_1.xsa \
   --db db/ip-drivers.json --db db/project-overrides.json \
   -D CORP_GIT=ssh://git@git.acme.com --project-root .
@@ -218,7 +297,7 @@ is missing entirely or the version didn't match any rule. Fix that before
 going further.
 
 ```bash
-# 3. Full build, which is the only real proof the driver compiles and links.
+# 4. Full build, which is the only real proof the driver compiles and links.
 cmake -S . -B build && cmake --build build --config Release
 ctest --test-dir build -C Release
 ```
@@ -313,7 +392,8 @@ don't edit the old one, designs still on 1.x need it:
 
 ```bash
 python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "2.*" \
-  --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v2.0.0
+  --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v2.0.0 \
+  --verify-ref
 ```
 
 Most specific match wins, so `1.*` and `2.*` coexist and rule order in the file
@@ -382,6 +462,11 @@ python -m ipman db versions --url $ART --repo fpga-generic --token env:ARTIFACTO
 | `URI '...' references ${CORP_GIT}, which is not set` | variable not passed through | add it to `DEFINES` in `ipman_configure()`, or export it |
 | `driver package for ... did not define target ipdrv_foo` | package defines a differently named target | set `--target` on the rule, or rename the target in the package |
 | `ipman: driver for ... not found at <path>` | `path` entry points somewhere with no `CMakeLists.txt` | fix the URI; check `${PROJECT_ROOT}` is what you think |
+| `no tag named 'v1.4.0' on the remote` | typo, or the tag was never pushed | `git push origin v1.4.0`; re-run with `--verify-ref` |
+| `ref_type is 'commit' but 'v1.0.0' is not a hex object name` | `--ref-type commit` on a tag | drop `--ref-type`, or pass the sha |
+| `ref 'main' is a branch, so the driver moves under you` | rule pins a branch | pin a tag or a full commit sha |
+| `abbreviated commit ... may become ambiguous` | short sha | use the full 40 characters |
+| git: `Remote branch <sha> not found in upstream` | a commit rule mis-declared as a tag | set `--ref-type commit` so the clone is not shallow |
 | CMake: `HASH mismatch` on an archive | tarball rebuilt, or wrong checksum | recompute the sha256; prefer immutable release artifacts |
 | `driver database v1.2.0 is already published` | republishing an existing version | `db bump patch`, then publish |
 | `refusing to publish with warnings` | unpinned git ref, or archive with no sha256 | fix the rule; `--allow-warnings` only for a deliberate exception |
@@ -393,7 +478,10 @@ python -m ipman db versions --url $ART --repo fpga-generic --token env:ARTIFACTO
 
 - [ ] VLNV key read from `ipman extract`, not typed from memory
 - [ ] Driver package defines `ipdrv_<name>` (or `--target` set)
-- [ ] `git` rule points at a tag, `archive` rule carries a `sha256`
+- [ ] `git` rule pins a tag or full commit sha, never a branch
+- [ ] `--ref-type` set explicitly if the ref is a commit with a hex-looking alternative
+- [ ] `ipman db verify` clean (or the ref is deliberately templated)
+- [ ] `archive` rule carries a `sha256`
 - [ ] `path` rules live in the project overlay, never the shared database
 - [ ] `ipman db validate --strict` clean
 - [ ] `ipman resolve` shows the IP resolved, not unresolved
