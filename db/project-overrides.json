@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "kind": "ip-driver-db",
+  "db_version": "0.2.0",
+  "updated": "2026-09-21T18:05:53Z",
+  "drivers": {
+    "acme.com:user:pwm_ctrl": {
+      "summary": "PWM controller, 2 channels, per-mille duty",
+      "owner": "fpga-team@acme.com",
+      "versions": [
+        {
+          "match": "1.*",
+          "type": "path",
+          "uri": "${PROJECT_ROOT}/drivers/pwm_ctrl",
+          "notes": "developed in-tree; promote to the shared database once it stabilises"
+        }
+      ]
+    }
+  },
+  "changelog": [
+    {
+      "db_version": "0.2.0",
+      "date": "2026-09-21T18:05:53Z",
+      "author": "bootstrap",
+      "change": "added acme.com:user:pwm_ctrl [1.*]"
+    }
+  ]
+}

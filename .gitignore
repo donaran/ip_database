@@ -1,0 +1,5 @@
+build/
+sample/_demo/
+sample/design_1.xsa
+__pycache__/
+*.pyc

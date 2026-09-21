@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "kind": "ip-driver-db",
+  "db_version": "1.1.0",
+  "updated": "2026-09-21T18:05:53Z",
+  "drivers": {
+    "acme.com:user:adc_stream": {
+      "summary": "Streaming ADC capture front end",
+      "owner": "dsp-team@acme.com",
+      "versions": [
+        {
+          "match": "1.*",
+          "type": "archive",
+          "uri": "${DEMO_ARCHIVES}/adc_stream-1.9.0.tar.gz",
+          "notes": "legacy register map, kept for older designs"
+        },
+        {
+          "match": "2.*",
+          "type": "archive",
+          "uri": "${DEMO_ARCHIVES}/adc_stream-2.1.0.tar.gz",
+          "sha256": "1360cbe75f644f707364b630f3a2ba0b89ce8ebf4ffa98bcab6903176f2bd8b4"
+        }
+      ]
+    },
+    "acme.com:user:axi_gpio_lite": {
+      "summary": "Lightweight AXI GPIO",
+      "owner": "fpga-team@acme.com",
+      "versions": [
+        {
+          "match": "1.*",
+          "type": "git",
+          "uri": "${DEMO_GIT}/axi_gpio_lite.git",
+          "ref": "v1.0.0"
+        }
+      ]
+    }
+  },
+  "changelog": [
+    {
+      "db_version": "1.1.0",
+      "date": "2026-09-21T18:05:53Z",
+      "author": "bootstrap",
+      "change": "removed acme.com:user:pwm_ctrl (all versions)"
+    },
+    {
+      "db_version": "1.0.0",
+      "date": "2026-09-21T18:04:36Z",
+      "author": "bootstrap",
+      "change": "first release of the shared driver database"
+    },
+    {
+      "db_version": "0.4.1",
+      "date": "2026-09-21T18:04:30Z",
+      "author": "bootstrap",
+      "change": "added acme.com:user:adc_stream [1.*]"
+    },
+    {
+      "db_version": "0.4.0",
+      "date": "2026-09-21T18:04:29Z",
+      "author": "bootstrap",
+      "change": "added acme.com:user:adc_stream [2.*]"
+    },
+    {
+      "db_version": "0.3.0",
+      "date": "2026-09-21T18:04:29Z",
+      "author": "bootstrap",
+      "change": "added acme.com:user:axi_gpio_lite [1.*]"
+    },
+    {
+      "db_version": "0.2.0",
+      "date": "2026-09-21T18:04:29Z",
+      "author": "bootstrap",
+      "change": "added acme.com:user:pwm_ctrl [1.*]"
+    }
+  ]
+}
