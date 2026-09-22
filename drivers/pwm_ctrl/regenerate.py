@@ -17,7 +17,6 @@ changes the registers.
 from __future__ import annotations
 
 import argparse
-import filecmp
 import shutil
 import subprocess
 import sys
@@ -36,6 +35,10 @@ TOPS = ("pwm_ctrl_v1", "pwm_ctrl_v2")
 # infers as an AXI4-Lite interface on its own. The record form relies on
 # VHDL-2008 record element constraints at the entity boundary.
 CPUIF = "axi4-lite-flat"
+
+CRLF = b"\r\n"
+CR = b"\r"
+LF = b"\n"
 
 
 def peakrdl(exe: str, *args) -> None:
@@ -61,6 +64,16 @@ def generate(out_dir: Path, exe: str) -> None:
                 "--copy-utils-pkg", "--hwif-report")
 
 
+def _normalised(path: Path) -> bytes:
+    """File contents with line endings normalised.
+
+    PeakRDL writes CRLF on Windows while git stores these files with LF, so a
+    byte-for-byte comparison reports every file as stale on a fresh Windows
+    checkout. Only the content matters here.
+    """
+    return path.read_bytes().replace(CRLF, LF).replace(CR, LF)
+
+
 def compare(reference: Path, candidate: Path) -> list:
     """Files that differ, are missing, or are unexpected."""
     names = {p.name for p in reference.glob("*")} | {p.name for p in candidate.glob("*")}
@@ -71,7 +84,7 @@ def compare(reference: Path, candidate: Path) -> list:
             bad.append("%s: not committed" % name)
         elif not b.is_file():
             bad.append("%s: no longer generated" % name)
-        elif not filecmp.cmp(a, b, shallow=False):
+        elif _normalised(a) != _normalised(b):
             bad.append("%s: differs" % name)
     return bad
 

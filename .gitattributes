@@ -1,0 +1,5 @@
+# Keep generated output byte-stable across platforms: git stores LF,
+# PeakRDL writes CRLF on Windows, and regenerate.py --check normalises.
+* text=auto
+drivers/pwm_ctrl/generated/* text eol=lf
+*.rdl text eol=lf
