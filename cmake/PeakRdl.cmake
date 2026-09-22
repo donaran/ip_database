@@ -14,17 +14,21 @@
 # skipped rather than failing, because a consumer of a driver has no reason to
 # have it:
 #
-#   pip install peakrdl peakrdl-regblock-vhdl
+#   uv sync                                     # this project
+#   pip install peakrdl peakrdl-regblock-vhdl   # anywhere else
 #
-# Point at a specific install with -DPEAKRDL_EXECUTABLE=/path/to/peakrdl, which
-# is how a venv or a pinned version gets used.
+# The project's .venv is searched first, so `uv sync` is enough. Point at some
+# other install with -DPEAKRDL_EXECUTABLE=/path/to/peakrdl.
 
 include_guard(GLOBAL)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
+# Prefer the project's own environment. `uv sync` puts peakrdl in .venv, so the
+# check works with no extra flags once the dev group is installed.
 find_program(PEAKRDL_EXECUTABLE
   NAMES peakrdl
+  HINTS "${CMAKE_SOURCE_DIR}/.venv/Scripts" "${CMAKE_SOURCE_DIR}/.venv/bin"
   DOC "PeakRDL command line tool")
 
 if(PEAKRDL_EXECUTABLE)

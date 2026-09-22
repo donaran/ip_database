@@ -23,33 +23,44 @@ runbook for adding a driver. Keep both in step with behaviour changes.
 ## Commands
 
 ```bash
+uv sync                                       # Python 3.12 + PeakRDL, once
+
 # Generate the demo hardware + stand-in git repo and archive. REQUIRED FIRST:
 # sample/design_1.xsa and sample/_demo/ are gitignored build inputs.
-python sample/bootstrap_demo.py --clean
+uv run python sample/bootstrap_demo.py --clean
 
-python -m unittest discover -s tests          # 124 tests, offline, ~2s
+uv run python -m unittest discover -s tests   # 124 tests, offline, ~2s
+uv run --python 3.9 --no-project python -m unittest discover -s tests  # the floor
 
-# Register definitions. Needs: pip install peakrdl peakrdl-regblock-vhdl
-python drivers/pwm_ctrl/regenerate.py           # after editing the .rdl
-python drivers/pwm_ctrl/regenerate.py --check   # what CI runs
+# Register definitions (PeakRDL comes from the dev group).
+uv run python drivers/pwm_ctrl/regenerate.py          # after editing the .rdl
+uv run python drivers/pwm_ctrl/regenerate.py --check  # what CI runs
 
 cmake -S . -B build                           # parses the XSA at configure time
 cmake --build build --config Release
 ctest --test-dir build -C Release
 ./build/Release/hello_fpga.exe
 
-# The CLI, outside CMake:
-PYTHONPATH=tools python -m ipman extract sample/design_1.xsa -f text -o -
+# The CLI. Inside the project, and the no-install form CMake itself uses:
+uv run ipman extract sample/design_1.xsa -f text -o -
 PYTHONPATH=tools python -m ipman db list
 ```
 
 Windows + Visual Studio is the verified configuration; the generator is
 multi-config, so `--config Release` and `build/Release/` are not optional.
 
+**uv is a development dependency, not a runtime one.** `cmake/IpMan.cmake`
+invokes ipman off `PYTHONPATH` with whatever 3.9+ interpreter `find_package`
+turns up, never the project venv, so a project consuming drivers needs no
+virtualenv and no network. Do not make the CMake path depend on uv or on an
+installed `ipman`. `.venv` is only searched for `peakrdl`, by
+`cmake/PeakRdl.cmake`.
+
 ## Layout
 
 | Path | Notes |
 | --- | --- |
+| `pyproject.toml`, `uv.lock`, `.python-version` | uv environment; 3.12 pinned, 3.9 is the supported floor |
 | `tools/ipman/` | the tool; **standard library only**, Python 3.9+ |
 | `cmake/IpMan.cmake` | `ipman_configure()`, `ipman_fetch_db()`, `ipman_verify_driver()` |
 | `cmake/PeakRdl.cmake` | `peakrdl_check_generated()` — drift test, skips without PeakRDL |
@@ -135,7 +146,13 @@ to `db.save()` — it would persist them. Mutating commands use single-file
 
 - **No third-party dependencies**, in the tool or the tests. `urllib`,
   `subprocess`, `zipfile`, `http.server` cover everything here. Do not add
-  `requests`, `pytest`, `jsonschema`.
+  `requests`, `pytest`, `jsonschema`. `[project.dependencies]` is empty and
+  must stay that way; PeakRDL lives in the `dev` dependency group because it
+  is needed to change register descriptions, not to run anything.
+- **3.9 is the floor and it is enforced, not aspirational.** Run
+  `uv run --python 3.9 --no-project python -m unittest discover -s tests`
+  before relying on anything newer. That is why every module carries
+  `from __future__ import annotations`.
 - `from __future__ import annotations` at the top of every module.
 - `%`-formatting throughout, not f-strings. Match it.
 - User-facing failures raise `IpmanError`; `cli.main()` prints it without a

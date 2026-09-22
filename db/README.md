@@ -4,19 +4,23 @@ A runbook for the whole trip: a new custom IP shows up in a block design, and
 you need `cmake --build` to compile a driver for it. Roughly 15 minutes for a
 driver that already exists, most of it waiting on review.
 
-Everything below assumes:
+Everything below assumes a synced environment and a default database:
 
 ```bash
-export PYTHONPATH=tools
+uv sync                             # Python 3.12 + the tooling, once
 export IPMAN_DB=db/ip-drivers.json
 ```
 
 PowerShell:
 
 ```powershell
-$env:PYTHONPATH = "tools"
-$env:IPMAN_DB   = "db/ip-drivers.json"
+uv sync
+$env:IPMAN_DB = "db/ip-drivers.json"
 ```
+
+`uv run ipman` is the project-local form. Outside this checkout the tool runs
+with no install at all -- `PYTHONPATH=tools uv run ipman ...` -- which is
+what `cmake/IpMan.cmake` does.
 
 > Quoting: `${CORP_GIT}` must reach ipman **unexpanded**. Use single quotes in
 > bash and PowerShell (`'${CORP_GIT}/fpga/pwm.git'`). Double quotes will let
@@ -29,7 +33,7 @@ $env:IPMAN_DB   = "db/ip-drivers.json"
 Never type the key from memory. Read it out of the hardware:
 
 ```bash
-python -m ipman extract hw/design_1.xsa -f text --custom-only -o -
+uv run ipman extract hw/design_1.xsa -f text --custom-only -o -
 ```
 
 ```
@@ -134,7 +138,7 @@ map:
 Check it from the driver's own CI, with no XSA and no database:
 
 ```bash
-python -m ipman driver check .
+uv run ipman driver check .
 ```
 
 A driver that serves several hardware revisions adds a `map` to each entry plus
@@ -165,7 +169,7 @@ database expresses both:
 ### From a git repository
 
 ```bash
-python -m ipman db add \
+uv run ipman db add \
   --vlnv   acme.com:user:pwm_ctrl \
   --match  "1.*" \
   --type   git \
@@ -192,17 +196,17 @@ Each rule pins its own ref, so the hardware version decides what gets built:
 
 ```bash
 # IP 1.2 needs driver v1.4.0; IP 1.3 needs v1.5.2.
-python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.2"  \
+uv run ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.2"  \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v1.4.0
 
-python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.3"  \
+uv run ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.3"  \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v1.5.2 --bump patch
 ```
 
 To pin a commit — the 2.x register map works but has no tag yet:
 
 ```bash
-python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "2.*"  \
+uv run ipman db add --vlnv acme.com:user:pwm_ctrl --match "2.*"  \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git'  \
   --ref 9f2c1ab4d7e0c3b8a1f5029e6d4c7b8a3f1e0d92 --ref-type commit
 ```
@@ -222,7 +226,7 @@ If `pwm_ctrl` IP 1.3 is always served by driver tag `v1.3.0`, one rule covers
 the whole family:
 
 ```bash
-python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.*"  \
+uv run ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.*"  \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git'  \
   --ref 'v${IP_VERSION}.0' --replace --bump minor
 ```
@@ -263,7 +267,7 @@ python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()
 ```
 
 ```bash
-python -m ipman db add \
+uv run ipman db add \
   --vlnv  acme.com:user:pwm_ctrl \
   --match "1.*" \
   --type  archive \
@@ -281,7 +285,7 @@ to something deeper, add `--subdir`.
 Goes in the **overlay**, not the shared database:
 
 ```bash
-python -m ipman db add --db db/project-overrides.json \
+uv run ipman db add --db db/project-overrides.json \
   --vlnv  acme.com:user:pwm_ctrl \
   --match "1.*" \
   --type  path \
@@ -300,13 +304,13 @@ own directory — but `${PROJECT_ROOT}` says what you mean.
 
 ```bash
 # 1. Schema, keys, source types. Warnings become errors at publish time.
-python -m ipman db validate --strict
+uv run ipman db validate --strict
 
 # 2. Do the git refs exist on their remotes?
-python -m ipman db verify -D CORP_GIT=ssh://git@git.acme.com
+uv run ipman db verify -D CORP_GIT=ssh://git@git.acme.com
 
 # 3. Does the rule actually match the hardware version in your XSA?
-python -m ipman resolve --xsa hw/design_1.xsa \
+uv run ipman resolve --xsa hw/design_1.xsa \
   --db db/ip-drivers.json --db db/project-overrides.json \
   -D CORP_GIT=ssh://git@git.acme.com --project-root .
 ```
@@ -349,8 +353,8 @@ prepended a changelog line naming you and the version:
 CI publishes:
 
 ```bash
-python -m ipman db validate --db db/ip-drivers.json --strict
-python -m ipman db publish --db db/ip-drivers.json \
+uv run ipman db validate --db db/ip-drivers.json --strict
+uv run ipman db publish --db db/ip-drivers.json \
   --url $ARTIFACTORY_URL --repo fpga-generic --token env:ARTIFACTORY_TOKEN
 ```
 
@@ -366,7 +370,7 @@ Publishing a `db_version` that already exists **fails by design**. If you get
 bump and publish again:
 
 ```bash
-python -m ipman db bump patch -m "corrected pwm_ctrl ref"
+uv run ipman db bump patch -m "corrected pwm_ctrl ref"
 ```
 
 `--force` exists for repairing a genuinely broken upload, and it breaks the
@@ -416,7 +420,7 @@ Vivado bumps `pwm_ctrl` from 1.2 to 2.0 with a new register map. Add a rule —
 don't edit the old one, designs still on 1.x need it:
 
 ```bash
-python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "2.*" \
+uv run ipman db add --vlnv acme.com:user:pwm_ctrl --match "2.*" \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v2.0.0 \
   --verify-ref
 ```
@@ -429,7 +433,7 @@ live in one binary.
 ### New driver release, same hardware version
 
 ```bash
-python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.*" \
+uv run ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.*" \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v1.4.1 \
   --replace --bump patch
 ```
@@ -443,11 +447,11 @@ Once the driver has its own repo and a tag:
 
 ```bash
 # Remove the local override...
-python -m ipman db remove --db db/project-overrides.json \
+uv run ipman db remove --db db/project-overrides.json \
   --vlnv acme.com:user:pwm_ctrl --bump major
 
 # ...and add the real thing to the shared database.
-python -m ipman db add --db db/ip-drivers.json \
+uv run ipman db add --db db/ip-drivers.json \
   --vlnv acme.com:user:pwm_ctrl --match "1.*" \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v1.4.0 \
   --summary "PWM controller" --owner fpga-team@acme.com
@@ -460,9 +464,9 @@ Rebuild and confirm the configure log now shows the driver arriving over git.
 ### Retire an IP
 
 ```bash
-python -m ipman db remove --vlnv acme.com:user:old_ip --bump major
+uv run ipman db remove --vlnv acme.com:user:old_ip --bump major
 # or just one rule:
-python -m ipman db remove --vlnv acme.com:user:old_ip --match "1.*" --bump major
+uv run ipman db remove --vlnv acme.com:user:old_ip --match "1.*" --bump major
 ```
 
 Removing the last rule drops the whole entry.
@@ -470,9 +474,9 @@ Removing the last rule drops the whole entry.
 ### Inspect what's there
 
 ```bash
-python -m ipman db list                      # human readable
-python -m ipman db list -f json | jq .       # everything
-python -m ipman db versions --url $ART --repo fpga-generic --token env:ARTIFACTORY_TOKEN
+uv run ipman db list                      # human readable
+uv run ipman db list -f json | jq .       # everything
+uv run ipman db versions --url $ART --repo fpga-generic --token env:ARTIFACTORY_TOKEN
 ```
 
 ---

@@ -1,0 +1,38 @@
+[project]
+name = "ipman"
+description = "Vivado XSA to custom IP manifest to driver sources to CMake"
+readme = "README.md"
+dynamic = ["version"]
+requires-python = ">=3.9"
+
+# Deliberately empty. ipman is standard library only, so a project consuming a
+# driver needs a Python interpreter and nothing else -- no install step, no
+# virtualenv, no network. cmake/IpMan.cmake runs it straight off PYTHONPATH.
+dependencies = []
+
+[project.scripts]
+ipman = "ipman.cli:main"
+
+# Everything needed to change the register descriptions. Not needed to build a
+# driver: generated/ is committed for exactly that reason.
+[dependency-groups]
+dev = [
+    "peakrdl>=1.5",
+    "peakrdl-regblock-vhdl>=1.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "tools/ipman/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tools/ipman"]
+
+[tool.uv]
+# The interpreter is pinned in .python-version. requires-python above stays
+# wider on purpose: the package targets 3.9+, and CI checks the floor as well
+# as the pinned version.
+default-groups = ["dev"]

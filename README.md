@@ -22,8 +22,11 @@ links one CMake target and prints what it found in the bitstream.
 ## Quick start
 
 ```bash
+# 0. Set up the toolchain: Python 3.12 (pinned in .python-version) plus PeakRDL.
+uv sync
+
 # 1. Build the demo hardware and the stand-in "remote" driver sources.
-python sample/bootstrap_demo.py --clean
+uv run python sample/bootstrap_demo.py --clean
 
 # 2. Configure and build. The XSA is parsed here.
 cmake -S . -B build
@@ -48,7 +51,15 @@ The demo deliberately covers all four cases: a driver fetched from git, one
 unpacked from an archive, one built from a directory in the project, and one IP
 with no driver at all.
 
-Tests: `python -m unittest discover -s tests` (124 tests, no network, no Vivado).
+Tests: `uv run python -m unittest discover -s tests` (124 tests, no network, no
+Vivado). Verified on the pinned 3.12 and on 3.9, the declared floor:
+`uv run --python 3.9 --no-project python -m unittest discover -s tests`.
+
+**uv is for developing ipman, not for using it.** `cmake/IpMan.cmake` runs the
+tool straight off `PYTHONPATH` with any 3.9+ interpreter it can find -- a
+project that just consumes drivers needs no virtualenv, no install step and no
+network. The environment exists so that changing register descriptions
+(PeakRDL) and running the tests are reproducible.
 
 ---
 
@@ -57,6 +68,7 @@ Tests: `python -m unittest discover -s tests` (124 tests, no network, no Vivado)
 | Path | What it is |
 | --- | --- |
 | `AGENTS.md` | orientation for coding agents: invariants and conventions |
+| `pyproject.toml`, `uv.lock`, `.python-version` | uv environment: Python 3.12 and the PeakRDL group |
 | `tools/ipman/` | the tool (pure standard library, Python 3.9+) |
 | `cmake/IpMan.cmake` | `ipman_configure()` and `ipman_fetch_db()` |
 | `cmake/PeakRdl.cmake` | ctest that the committed PeakRDL output matches the `.rdl` |
@@ -155,7 +167,7 @@ expansion, so a template that resolves to a sha is still treated as a commit.
 Check that the refs are real before anyone builds:
 
 ```bash
-python -m ipman db verify -D CORP_GIT=ssh://git@git.acme.com
+uv run ipman db verify -D CORP_GIT=ssh://git@git.acme.com
 ```
 
 ```
@@ -188,24 +200,23 @@ Never hand-edit it; the CLI keeps the file sorted, validated, versioned, and
 changelogged, so git diffs stay readable.
 
 ```bash
-export PYTHONPATH=tools
 export IPMAN_DB=db/ip-drivers.json
 
 # Add an IP, or a new hardware-version rule for one that exists.
-python -m ipman db add \
+uv run ipman db add \
   --vlnv acme.com:user:pwm_ctrl --match "2.*" \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v2.0.0 \
   --summary "PWM controller" --owner fpga-team@acme.com
 
 # Point an existing rule at a newer driver release.
-python -m ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.*" \
+uv run ipman db add --vlnv acme.com:user:pwm_ctrl --match "1.*" \
   --type git --uri '${CORP_GIT}/fpga/drivers/pwm_ctrl.git' --ref v1.4.1 \
   --replace --bump patch
 
-python -m ipman db remove --vlnv acme.com:user:old_ip
-python -m ipman db list
-python -m ipman db validate --strict
-python -m ipman db bump major -m "schema cleanup"
+uv run ipman db remove --vlnv acme.com:user:old_ip
+uv run ipman db list
+uv run ipman db validate --strict
+uv run ipman db bump major -m "schema cleanup"
 ```
 
 Every edit bumps `db_version` (`--bump major|minor|patch`, default `minor`) and
@@ -234,14 +245,13 @@ commercial feature, no Python dependencies.
 token with deploy rights on it. Export it as `ARTIFACTORY_TOKEN`.
 
 ```bash
-export PYTHONPATH=tools
 ART=https://acme.jfrog.io/artifactory
 
-python -m ipman db publish --db db/ip-drivers.json \
+uv run ipman db publish --db db/ip-drivers.json \
   --url $ART --repo fpga-generic --token env:ARTIFACTORY_TOKEN
 
-python -m ipman db versions --url $ART --repo fpga-generic --token env:ARTIFACTORY_TOKEN
-python -m ipman db fetch --url $ART --repo fpga-generic \
+uv run ipman db versions --url $ART --repo fpga-generic --token env:ARTIFACTORY_TOKEN
+uv run ipman db fetch --url $ART --repo fpga-generic \
   --db-version 1.1.0 -o db/ip-drivers.json --token env:ARTIFACTORY_TOKEN
 ```
 
@@ -263,9 +273,9 @@ job ties the two together:
 publish-driver-db:
   rules: [{ if: $CI_COMMIT_TAG }]
   script:
-    - export PYTHONPATH=tools
-    - python -m ipman db validate --db db/ip-drivers.json --strict
-    - python -m ipman db publish --db db/ip-drivers.json
+    - uv sync
+    - uv run ipman db validate --db db/ip-drivers.json --strict
+    - uv run ipman db publish --db db/ip-drivers.json
         --url $ARTIFACTORY_URL --repo fpga-generic --token env:ARTIFACTORY_TOKEN
 ```
 
@@ -391,7 +401,7 @@ optional by default; pass `REQUIRE_MANIFEST` to `ipman_configure()` to insist.
 Validate one from a driver's own CI, no XSA needed:
 
 ```bash
-python -m ipman driver check .
+uv run ipman driver check .
 ```
 
 ### Runtime register-map selection
@@ -456,10 +466,9 @@ everything in `drivers/pwm_ctrl/generated/` comes out of it. One command owns
 the exporter flags:
 
 ```bash
-cd drivers/pwm_ctrl
-pip install peakrdl peakrdl-regblock-vhdl
-python regenerate.py            # rewrite generated/
-python regenerate.py --check    # fail if generated/ is stale
+uv sync                                              # installs PeakRDL
+uv run python drivers/pwm_ctrl/regenerate.py         # rewrite generated/
+uv run python drivers/pwm_ctrl/regenerate.py --check # fail if it is stale
 ```
 
 It runs two exporters per revision:
@@ -482,8 +491,9 @@ generated/ is out of date with pwm_ctrl.rdl:
 Run: python regenerate.py
 ```
 
-The test is `DISABLED` rather than failing when PeakRDL is not installed. Point
-it at a venv with `-DPEAKRDL_EXECUTABLE=/path/to/peakrdl`.
+The test is `DISABLED` rather than failing when PeakRDL is not installed. The
+project's `.venv` is searched first, so `uv sync` is enough; point elsewhere
+with `-DPEAKRDL_EXECUTABLE=/path/to/peakrdl`.
 
 **The RDL is genuinely authoritative.** The map classes take offsets from the
 generated address-space overlay and masks from the generated field macros, and
@@ -621,10 +631,16 @@ ipman db publish | fetch | versions        (Artifactory)
 `IPMAN_DB` sets the default database path. `generate` is what
 `ipman_configure()` calls; the rest are for humans and CI.
 
-Useful on its own, with no CMake involved:
+Useful on its own, with no CMake involved. Inside this project:
 
 ```bash
-PYTHONPATH=tools python -m ipman extract sample/design_1.xsa -f text -o -
+uv run ipman extract sample/design_1.xsa -f text -o -
+```
+
+Anywhere else, with no install at all -- which is how CMake invokes it:
+
+```bash
+PYTHONPATH=tools python -m ipman extract design_1.xsa -f text -o -
 ```
 
 ```
