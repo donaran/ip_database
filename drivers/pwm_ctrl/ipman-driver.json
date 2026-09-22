@@ -47,6 +47,13 @@
   "register_model": {
     "source": "rdl/pwm_ctrl.rdl",
     "sha256": "95b980a83046893ae8675689c723e468bd6c77afcf6f072cb08bceefb45c49a7",
-    "generator": "hand-written stand-in for peakrdl c-header"
+    "language": "SystemRDL 2.0",
+    "tops": [
+      "pwm_ctrl_v1",
+      "pwm_ctrl_v2"
+    ],
+    "generated": "generated/",
+    "generator": "PeakRDL 1.5.0 (c-header 1.1.0, regblock-vhdl 1.3.1.1)",
+    "regenerate": "python regenerate.py"
   }
 }

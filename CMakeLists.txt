@@ -59,5 +59,13 @@ endif()
 
 enable_testing()
 add_test(NAME hello_fpga_runs COMMAND hello_fpga)
+
+# The pwm_ctrl driver's register headers and RTL are generated from SystemRDL
+# and committed. This checks they still match the .rdl; it skips cleanly when
+# PeakRDL is not installed.
+include(PeakRdl)
+peakrdl_check_generated(
+  NAME   pwm_ctrl
+  SCRIPT "${CMAKE_SOURCE_DIR}/drivers/pwm_ctrl/regenerate.py")
 add_test(NAME ipman_unit_tests
          COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s "${CMAKE_SOURCE_DIR}/tests")

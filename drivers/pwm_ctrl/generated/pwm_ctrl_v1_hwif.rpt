@@ -1,0 +1,2 @@
+hwif_out.CTRL.ENABLE.value
+hwif_out.DUTY(1 downto 0).VALUE.value(9 downto 0)

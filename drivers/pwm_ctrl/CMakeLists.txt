@@ -24,8 +24,11 @@ add_library(${_target} STATIC
   src/pwm_ctrl_v2.cpp)
 add_library(acme::pwm_ctrl ALIAS ${_target})
 
-target_include_directories(${_target} PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_include_directories(${_target}
+  PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  # PeakRDL output: offsets, field masks and the address-space overlay. Private
+  # because it is an implementation detail -- the map classes are the API.
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/generated)
 target_compile_features(${_target} PUBLIC cxx_std_17)
 
 # The hardware version ipman matched is handed to the driver so a binary can

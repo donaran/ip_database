@@ -59,10 +59,12 @@ Tests: `python -m unittest discover -s tests` (124 tests, no network, no Vivado)
 | `AGENTS.md` | orientation for coding agents: invariants and conventions |
 | `tools/ipman/` | the tool (pure standard library, Python 3.9+) |
 | `cmake/IpMan.cmake` | `ipman_configure()` and `ipman_fetch_db()` |
+| `cmake/PeakRdl.cmake` | ctest that the committed PeakRDL output matches the `.rdl` |
 | `db/README.md` | **runbook: adding a new driver or repository** |
 | `db/ip-drivers.json` | the shared driver database |
 | `db/project-overrides.json` | project overlay: drivers still developed in-tree |
 | `drivers/pwm_ctrl/` | in-project driver package: two register-map revisions, `.rdl`, manifest |
+| `drivers/pwm_ctrl/generated/` | committed PeakRDL output — regenerate, never edit |
 | `src/main.cpp` | the hello-world application |
 | `sample/` | synthetic XSA and stand-in git repo / archive |
 | `tests/` | unit tests: a fake Artifactory server and a throwaway git repo |
@@ -449,23 +451,114 @@ Put it at offset 0 and never move it.
 
 ### SystemRDL / PeakRDL
 
-`register_model` is where a generated flow plugs in. `drivers/pwm_ctrl/rdl/pwm_ctrl.rdl`
-is the register definition of record for the demo IP; in a real flow it drives
-the RTL, the C header and the documentation from one source:
+`drivers/pwm_ctrl/rdl/pwm_ctrl.rdl` is the register definition of record, and
+everything in `drivers/pwm_ctrl/generated/` comes out of it. One command owns
+the exporter flags:
 
 ```bash
-peakrdl regblock-vhdl rdl/pwm_ctrl.rdl -o rtl/ --cpuif axi4-lite
-peakrdl c-header      rdl/pwm_ctrl.rdl -o generated/pwm_ctrl_v1.h --bitfields
-peakrdl html          rdl/pwm_ctrl.rdl -o docs/
+cd drivers/pwm_ctrl
+pip install peakrdl peakrdl-regblock-vhdl
+python regenerate.py            # rewrite generated/
+python regenerate.py --check    # fail if generated/ is stale
 ```
 
-SystemRDL has no version property of its own, so the revision lives in a
-user-defined property (`rdl_revision`) and must equal the version the IP is
-packaged with in Vivado. Recording the `.rdl` sha256 in the manifest is what
-stops the two drifting apart silently.
+It runs two exporters per revision:
 
-The headers in this repo are hand-written stand-ins with the same layout --
-PeakRDL is not installed here and has not been run.
+| Output | Exporter | Consumed by |
+| --- | --- | --- |
+| `pwm_ctrl_v*.h` | `peakrdl c-header -b ltoh` | the driver's map classes |
+| `pwm_ctrl_v*.vhd`, `*_pkg.vhd`, `reg_utils.vhd` | `peakrdl regblock-vhdl` | the VHDL IP |
+| `pwm_ctrl_v*_hwif.rpt` | `--hwif-report` | review, and wiring the RTL up |
+
+The generated files are **committed**, so building a driver needs only a C++
+toolchain — PeakRDL is a dependency of changing the registers, not of consuming
+them. `peakrdl_check_generated()` in `cmake/PeakRdl.cmake` registers a ctest
+that regenerates into a temp directory and diffs, so the two cannot drift:
+
+```
+generated/ is out of date with pwm_ctrl.rdl:
+  pwm_ctrl_v1.h: differs
+  pwm_ctrl_v1.vhd: differs
+Run: python regenerate.py
+```
+
+The test is `DISABLED` rather than failing when PeakRDL is not installed. Point
+it at a venv with `-DPEAKRDL_EXECUTABLE=/path/to/peakrdl`.
+
+**The RDL is genuinely authoritative.** The map classes take offsets from the
+generated address-space overlay and masks from the generated field macros, and
+`static_assert` the hand-written contract against it:
+
+```cpp
+constexpr std::size_t kDuty0 = offsetof(pwm_ctrl_v1_t, DUTY);
+constexpr std::uint32_t kDutyMask = PWM_CTRL_V1__DUTY__VALUE_bm;
+
+static_assert(PwmCtrlV1::kIdOffset == offsetof(pwm_ctrl_v1_t, ID),
+              "ID register moved in the register description");
+```
+
+Move the ID register in the `.rdl` and the driver stops compiling instead of
+silently probing the wrong word.
+
+**Versioning.** SystemRDL has no version property — the built-in `addrmap`
+properties are `addressing`, `alignment`, `bigendian`, `bridge`, `dontcompare`,
+`donttest`, `errextbus`, `hdl_path`, `hdl_path_gate`, `littleendian`, `lsb0`,
+`msb0`, `rsvdset`, `rsvdsetX`, `sharedextbus`, plus the global `name`/`desc`.
+So the revision is a user-defined property (SystemRDL 2.0 clause 15) and must
+equal the version the IP is packaged with in Vivado:
+
+```systemrdl
+property rdl_revision { type = string; component = addrmap; };
+
+addrmap pwm_ctrl_v1 {
+    rdl_revision = "1.2";      // == the Vivado VLNV version
+    ...
+};
+```
+
+Two independent guards catch drift: `ipman-driver.json` records the `.rdl`
+sha256, and `regenerate.py --check` compares the output. Editing the registers
+without regenerating trips both.
+
+#### Two findings worth knowing
+
+**The C header does not compile with MSVC.** `peakrdl c-header` emits its
+address-space overlay as `typedef struct __attribute__ ((__packed__))`, which is
+GCC/Clang syntax, in both the default and `--bitfields` forms. That is correct
+for the real target — `arm-none-eabi-gcc`, `aarch64-linux-gnu-gcc` — but the
+host build here uses MSVC. `include/peakrdl_compat.hpp` neutralises
+`__attribute__` on MSVC only; every member of this map is a `uint32_t` so
+packing is a no-op, and the generated `static_assert` on struct size still holds
+the layout honest. That shim would not be safe for a map with sub-word members,
+and the `static_assert` is what would catch it.
+
+**Use `--cpuif axi4-lite-flat`, not `axi4-lite`, for Vivado.** The record form
+puts a VHDL-2008 record with element constraints on the entity boundary:
+
+```vhdl
+s_axil_i : in axi4lite_slave_in_intf(AWADDR(3 downto 0), WDATA(31 downto 0), ...);
+```
+
+The flat form gives plain ports with the conventional AXI names, which the
+Vivado IP packager infers as an AXI4-Lite interface without help:
+
+```vhdl
+s_axil_awvalid : in  std_logic;
+s_axil_awaddr  : in  std_logic_vector(3 downto 0);
+s_axil_wdata   : in  std_logic_vector(31 downto 0);
+```
+
+`hwif_out` stays a VHDL record either way, which is the good part — your own
+RTL connects by name with the compiler checking it, and that record never
+reaches the IP boundary. Pass `--copy-utils-pkg` to get `reg_utils.vhd`
+alongside the module; it is needed and is not emitted by default. The generated
+VHDL is IEEE 1076-2008 and uses `ieee.fixed_pkg` and extended identifiers
+(`\pwm_ctrl_v1.CTRL_out_t\`), so set the file type to VHDL 2008 in Vivado and
+synthesise it early rather than late.
+
+Verified here with PeakRDL 1.5.0, peakrdl-cheader 1.1.0, peakrdl-regblock-vhdl
+1.3.1.1, systemrdl-compiler 1.32.2. The Vivado half is not verified — no Xilinx
+tools on this machine.
 
 ## Driver package contract
 

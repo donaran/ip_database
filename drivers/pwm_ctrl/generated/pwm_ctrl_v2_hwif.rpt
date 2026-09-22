@@ -1,0 +1,4 @@
+hwif_out.CTRL.ENABLE.value
+hwif_out.CTRL.INVERT.value
+hwif_out.DUTY(1 downto 0).VALUE.value(15 downto 0)
+hwif_out.PHASE(1 downto 0).VALUE.value(15 downto 0)
