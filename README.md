@@ -83,6 +83,82 @@ network. The environment exists so that changing register descriptions
 
 ---
 
+## How a version gets selected
+
+Three selections, at two different times, answering different questions. Worth
+reading once before the reference sections below, because they are easy to
+conflate.
+
+```
+  XSA: acme.com:user:pwm_ctrl:1.2
+         |
+  +-- configure time ------------------------------------+
+  | 1. which driver?   database  1.* -> drivers/pwm_ctrl |
+  | 2. does it agree?  manifest  claims 1.* and 2.*      |
+  | 3. which maps?     manifest  both -> variant<V1, V2> |
+  +------------------------------------------------------+
+         |
+  +-- run time ------------------------------------------+
+  | 4. which layout?   ID register at 0x00 -> V1 or V2   |
+  +------------------------------------------------------+
+```
+
+**1. Which driver.** The database key drops the version, so
+`acme.com:user:pwm_ctrl:1.2` looks up `acme.com:user:pwm_ctrl` and the `1.2` is
+matched against that entry's rules. Rules are *scored*, not tried in order:
+
+| rule | vs `1.2` | |
+| --- | --- | --- |
+| `1.2` | 1000 | exact |
+| `1.*` | 102 | glob: 100 + non-wildcard characters |
+| `*` | 0 | catch-all |
+| `2.*` | no match | |
+
+Highest wins, which is why rule order in the file never changes the outcome.
+The lock records which rule won (`matched`), so the decision is auditable
+after the fact.
+
+Instances at the same version share one driver build: `pwm_ctrl_0` and
+`pwm_ctrl_1` are both 1.2, so there is one `ipdrv_pwm_ctrl`. Were one of them
+2.0, you would get `ipdrv_pwm_ctrl_v1_2` and `ipdrv_pwm_ctrl_v2_0`.
+
+**2. Does the driver agree.** The database's claim is unverified until the
+package is on disk. `ipman-driver.json` states what the driver actually serves,
+scored by the same function, so the precedence rule exists in one place:
+
+```
+ipman: ipdrv_pwm_ctrl implements acme.com:user:pwm_ctrl 1.2 (rule 1.*, driver 1.4.0)
+```
+
+A driver that does not cover 1.2 stops the configure here.
+
+**3. Which maps get compiled in.** The generated variant covers **every**
+revision the driver declares, not just the one in today's bitstream. The demo
+design contains only 1.2, yet the binary carries both `PwmCtrlV1` and
+`PwmCtrlV2` — a binary that can only bind the version it was built for would
+defeat the point of step 4.
+
+**4. Which register layout.** At runtime, from what the silicon reports. See
+[Runtime register-map selection](#runtime-register-map-selection).
+
+### When the versions disagree
+
+Steps 1 and 4 read different sources — the XSA, and the hardware — so they can
+legitimately differ when a bitstream is updated without rebuilding.
+`matches_build()` reports that rather than treating it as an error.
+
+Everything that must *not* drift is guarded, and each guard fails loudly:
+
+| Drift | Caught by |
+| --- | --- |
+| Database points at a driver that does not serve this version | `ipman driver verify`, at configure |
+| Driver manifest vs its register description | `register_model.sha256` in the manifest |
+| Register description vs its generated output | `regenerate.py --check`, a ctest |
+| Register map vs the driver's own ID-register constant | `static_assert` at compile time |
+
+The ID register is the one thing that can never be version-selected: it is read
+*before* the version is known. Same offset, same layout, every revision.
+
 ## The driver database
 
 One JSON file, keyed by `vendor:library:name` — the VLNV **without** the
@@ -412,7 +488,8 @@ across a board family -- something also has to pick *a register layout*, at
 runtime, from what the hardware reports.
 
 Any `implements` entry with a `map` opts into that. ipman generates
-`ipman_maps.hpp` from the manifests of the drivers it resolved:
+`ipman_maps.hpp` from the manifests of the drivers it resolved, covering every
+revision each one declares rather than only the revision in this bitstream:
 
 ```cpp
 namespace ipman::pwm_ctrl {
@@ -426,7 +503,24 @@ namespace ipman::pwm_ctrl {
 
 `bind` reads the ID register at its fixed offset, checks the magic, decodes
 major/minor, and constructs the alternative whose `match` covers that version.
-The version tests are compiled from the manifest, so the rule is stated once.
+The version tests are compiled from the manifest, so the rule is stated once:
+
+```cpp
+inline std::optional<Map> bind(std::uintptr_t base) {
+    const Probe p = probe(base);
+    if (!p.valid) return std::nullopt;
+    const IpVersion v = p.version;
+    if (v.major == 1)  /* manifest rule 1.* */
+        return Map{std::in_place_type<acme::PwmCtrlV1>, base};
+    if (v.major == 2)  /* manifest rule 2.* */
+        return Map{std::in_place_type<acme::PwmCtrlV2>, base};
+    return std::nullopt;
+}
+```
+
+`std::nullopt` means one of two things: the magic did not match, so there is no
+such IP at that address; or the hardware reported a revision no linked driver
+covers.
 
 ```cpp
 auto map = ipman::pwm_ctrl::bind(PWM_CTRL_0_BASEADDR);
